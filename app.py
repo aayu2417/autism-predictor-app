@@ -2,155 +2,160 @@ import streamlit as st
 import pandas as pd
 import pickle
 
-# --------------------------------------------------
-# Load model and encoders
-# --------------------------------------------------
+# ==============================
+# Load trained model
+# ==============================
 with open("best_model.pkl", "rb") as f:
     model = pickle.load(f)
 
-with open("encoders.pkl", "rb") as f:
-    encoders = pickle.load(f)
+# ==============================
+# Configuration
+# ==============================
+FEATURES = [
+    "A1_Score","A2_Score","A3_Score","A4_Score","A5_Score",
+    "A6_Score","A7_Score","A8_Score","A9_Score","A10_Score",
+    "autism_in_family"
+]
 
-# --------------------------------------------------
-# Helper function for AQ-10 scoring
-# --------------------------------------------------
-def score_answer(user_answer, autistic_answer):
-    return 1 if user_answer == autistic_answer else 0
+# Reverse-scored AQ questions
+REVERSE_QUESTIONS = [
+    "A2_Score","A3_Score","A4_Score",
+    "A5_Score","A6_Score","A9_Score"
+]
 
+# ==============================
+# Helper functions
+# ==============================
+def apply_reverse_scoring(df):
+    df = df.copy()
+    for q in REVERSE_QUESTIONS:
+        df[q] = 1 - df[q]
+    return df
 
+def aq_interpretation(score):
+    if score >= 7:
+        return "High AQ traits detected"
+    elif score >= 4:
+        return "Moderate AQ traits detected"
+    else:
+        return "Low AQ traits detected"
+
+def ml_interpretation(prob):
+    if prob >= 0.75:
+        return "High model confidence"
+    elif prob >= 0.35:
+        return "Moderate model confidence"
+    else:
+        return "Low model confidence"
+
+def yes_no(question):
+    return st.selectbox(question, ["No", "Yes"]) == "Yes"
+
+# ==============================
+# Streamlit UI
+# ==============================
 st.set_page_config(page_title="Autism Screening Tool", layout="centered")
-st.title("🧠 Autism Screening Tool")
+st.title("Autism Trait Screening Tool \nBased on the AQ-10 Score")
 st.caption("This is a screening tool, not a medical diagnosis.")
 
-st.markdown("---")
+# ------------------------------
+# Basic Info (not used in model)
+# ------------------------------
+st.subheader("Basic Information")
+age = st.number_input("Age", min_value=1, max_value=120, value=18)
+gender = st.selectbox("Gender", ["Male", "Female", "Other", "Prefer not to say"])
 
-# --------------------------------------------------
-# AQ-10 QUESTIONS
-# --------------------------------------------------
-A1 = score_answer(
-    st.selectbox("I often notice small sounds when others do not.", ["No", "Yes"]),
-    "Yes"
-)
+# ------------------------------
+# AQ Questions
+# ------------------------------
+st.subheader("AQ Screening Questions")
 
-A2 = score_answer(
-    st.selectbox("I usually concentrate more on the whole picture rather than small details.", ["No", "Yes"]),
-    "No"
-)
+A1 = yes_no("I often notice small sounds when others do not.")
+A2 = yes_no("I usually concentrate more on the whole picture rather than small details.")
+A3 = yes_no("I find it easy to do more than one thing at once.")
+A4 = yes_no("If there is an interruption, I can switch back very quickly.")
+A5 = yes_no("I find it easy to read between the lines when someone is talking to me.")
+A6 = yes_no("I know how to tell if someone listening to me is getting bored.")
+A7 = yes_no("When reading a story, I find it difficult to work out characters’ intentions.")
+A8 = yes_no("I like to collect information about categories of things.")
+A9 = yes_no("I find it easy to work out what someone is thinking or feeling just by looking at their face.")
+A10 = yes_no("I find it difficult to work out people’s intentions.")
 
-A3 = score_answer(
-    st.selectbox("I find it easy to do more than one thing at once.", ["No", "Yes"]),
-    "No"
-)
+st.subheader("Family History")
+family_history = st.selectbox("Family history of autism?", ["No", "Yes"])
 
-A4 = score_answer(
-    st.selectbox("If there is an interruption, I can switch back very quickly.", ["No", "Yes"]),
-    "No"
-)
+# ==============================
+# Prediction
+# ==============================
+if st.button("Predict"):
+    # Raw input
+    raw = {
+        "A1_Score": int(A1),
+        "A2_Score": int(A2),
+        "A3_Score": int(A3),
+        "A4_Score": int(A4),
+        "A5_Score": int(A5),
+        "A6_Score": int(A6),
+        "A7_Score": int(A7),
+        "A8_Score": int(A8),
+        "A9_Score": int(A9),
+        "A10_Score": int(A10),
+        "autism_in_family": 1 if family_history == "Yes" else 0
+    }
 
-A5 = score_answer(
-    st.selectbox("I find it easy to read between the lines when someone is talking.", ["No", "Yes"]),
-    "No"
-)
+    # ------------------------------
+    # AQ deterministic score
+    # ------------------------------
+    aq_score = (
+        raw["A1_Score"] +
+        (1 - raw["A2_Score"]) +
+        (1 - raw["A3_Score"]) +
+        (1 - raw["A4_Score"]) +
+        (1 - raw["A5_Score"]) +
+        (1 - raw["A6_Score"]) +
+        raw["A7_Score"] +
+        raw["A8_Score"] +
+        (1 - raw["A9_Score"]) +
+        raw["A10_Score"]
+    )
 
-A6 = score_answer(
-    st.selectbox("I know how to tell if someone listening to me is getting bored.", ["No", "Yes"]),
-    "No"
-)
+    # ------------------------------
+    # ML prediction
+    # ------------------------------
+    df = pd.DataFrame([raw])
+    df = apply_reverse_scoring(df)
+    df = df[FEATURES]
 
-A7 = score_answer(
-    st.selectbox("When reading a story, I find it difficult to work out characters’ intentions.", ["No", "Yes"]),
-    "Yes"
-)
+    autism_prob = model.predict_proba(df)[0][1]
 
-A8 = score_answer(
-    st.selectbox("I like to collect information about categories of things.", ["No", "Yes"]),
-    "Yes"
-)
+    # ==============================
+    # Results
+    # ==============================
+    st.subheader("Results")
 
-A9 = score_answer(
-    st.selectbox("I find it easy to work out what someone is thinking from their face.", ["No", "Yes"]),
-    "No"
-)
+    st.markdown("### 🧮 AQ Screening Result")
+    st.write(f"**AQ Score:** {aq_score} / 10")
+    st.write(f"**Interpretation:** {aq_interpretation(aq_score)}")
 
-A10 = score_answer(
-    st.selectbox("I find it difficult to work out people’s intentions.", ["No", "Yes"]),
-    "Yes"
-)
+    st.markdown("---")
 
-st.markdown("---")
+    st.markdown("### 🤖 ML Model Assessment")
+    st.write(f"**Autism probability:** {autism_prob*100:.2f}%")
+    st.write(f"**Interpretation:** {ml_interpretation(autism_prob)}")
 
-# --------------------------------------------------
-# OTHER INPUTS
-# --------------------------------------------------
-age = st.number_input("Age", min_value=1, max_value=100, value=18)
+    st.markdown("---")
 
-gender = st.selectbox("Gender", encoders["gender"].classes_)
-ethnicity = st.selectbox("Ethnicity", encoders["ethnicity"].classes_)
-jaundice = st.selectbox("Jaundice at birth?", encoders["jaundice"].classes_)
-autism_in_family = st.selectbox("Family history of autism?", encoders["autism_in_family"].classes_)
-country = st.selectbox("Country", encoders["country"].classes_)
-used_app_before = st.selectbox("Used screening app before?", encoders["used_app_before"].classes_)
-relation = st.selectbox("Who is filling the form?", encoders["relation"].classes_)
-
-# --------------------------------------------------
-# Encode categorical variables
-# --------------------------------------------------
-gender = encoders["gender"].transform([gender])[0]
-ethnicity = encoders["ethnicity"].transform([ethnicity])[0]
-jaundice = encoders["jaundice"].transform([jaundice])[0]
-autism_in_family = encoders["autism_in_family"].transform([autism_in_family])[0]
-country = encoders["country"].transform([country])[0]
-used_app_before = encoders["used_app_before"].transform([used_app_before])[0]
-relation = encoders["relation"].transform([relation])[0]
-
-# --------------------------------------------------
-# Build input DataFrame (ORDER MUST MATCH TRAINING)
-# --------------------------------------------------
-input_df = pd.DataFrame([[
-    A1, A2, A3, A4, A5,
-    A6, A7, A8, A9, A10,
-    age, gender, ethnicity, jaundice,
-    autism_in_family, country, used_app_before, relation
-]], columns=[
-    'A1_Score','A2_Score','A3_Score','A4_Score','A5_Score',
-    'A6_Score','A7_Score','A8_Score','A9_Score','A10_Score',
-    'age','gender','ethnicity','jaundice','autism_in_family',
-    'country','used_app_before','relation'
-])
-
-# --------------------------------------------------
-# Prediction + Probability (label-safe)
-# --------------------------------------------------
-if st.button("🔍 Predict"):
-
-    pred_class = model.predict(input_df)[0]
-    pred_proba = model.predict_proba(input_df)[0]
-
-    class_labels = model.classes_
-    prob_map = dict(zip(class_labels, pred_proba))
-
-    autism_prob = prob_map.get(1, 0) * 100
-
-    st.markdown("## 📊 Screening Result")
-
-    if autism_prob >= 75:
-        st.error("🔴 **High likelihood of autism traits**")
-        st.write("The model indicates a strong presence of autism-related traits.")
-    elif autism_prob >= 50:
-        st.warning("🟠 **Moderate likelihood of autism traits**")
-        st.write("Some autism-related traits are present. Further evaluation is advised.")
-    elif autism_prob >= 25:
-        st.info("🟡 **Low likelihood of autism traits**")
-        st.write("Few autism-related traits are present.")
+    # Combined explanation
+    if aq_score >= 7 and autism_prob >= 0.6:
+        st.error("🔴 High AQ traits detected with strong model confidence.")
+    elif aq_score >= 7 and autism_prob < 0.6:
+        st.warning("⚠️ High AQ traits detected, but model confidence is moderate.")
+    elif aq_score < 4 and autism_prob < 0.3:
+        st.success("✅ Low AQ traits and low model confidence.")
     else:
-        st.success("🟢 **Very low likelihood of autism traits**")
-        st.write("Autism-related traits are unlikely.")
+        st.info("🟡 Mixed indicators detected.")
 
-    # Probability bar
-    st.markdown("### 🔢 Model Confidence")
-    st.progress(int(autism_prob))
-    st.write(f"**Autism probability:** {autism_prob:.2f}%")
-
-    st.warning(
-        "⚠️ This tool is for screening purposes only and does not provide a medical diagnosis."
+    st.caption(
+        "This tool is intended for educational and screening purposes only. "
+        "It does not provide a medical diagnosis."
     )
